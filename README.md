@@ -1,103 +1,97 @@
 # google-maps-mcp
 
-An MCP server that gives Claude (or any MCP client) access to Google Maps so it
-can answer location-aware questions like *"what's a good ramen place near me?"*,
-*"how long to drive to the airport?"*, or *"what's the address of this lat/lng?"*.
+A Python MCP server that gives Claude (or any MCP client) Google Maps: place search, place details, geocoding, directions, travel times, and your current location.
+
+It can answer questions like *"what's a good ramen place near me?"*, *"how long is the drive to the airport?"*, or *"what's the address at this lat/lng?"*.
 
 ## Tools
 
-| Tool | Purpose |
-| --- | --- |
-| `get_my_location` | Returns your best-known current lat/lng (CoreLocation → Google IP geolocation → env default). |
-| `search_nearby` | Places API (New) Nearby Search by type (restaurant, cafe, tourist_attraction, etc.). |
-| `search_text` | Places API (New) free-form text search ("vegan brunch in Mission"). |
-| `get_place_details` | Hours, phone, website, reviews, amenities for a specific place_id. |
-| `geocode` | Address → lat/lng + structured components. |
-| `reverse_geocode` | lat/lng → human-readable address. |
-| `get_directions` | Turn-by-turn directions, driving/walking/bicycling/transit. |
-| `get_distance_matrix` | Travel time and distance for every origin/destination pair. |
+| Tool | What it does | Google API |
+| --- | --- | --- |
+| `get_my_location` | Your best-known current lat/lng. It tries macOS CoreLocation first, then Google IP geolocation, then a default you configure. | Geolocation API |
+| `search_nearby` | Places near a point, filtered by type (`restaurant`, `cafe`, `bar`, ...), with optional `open_now` and `min_rating`. Results are ranked by popularity or distance. | Places API (New) |
+| `search_text` | Free-text place search, e.g. "vegan brunch in Mission". | Places API (New) |
+| `get_place_details` | Hours, phone, website, reviews, price level, and amenities for a `place_id`. | Places API (New) |
+| `geocode` | Turns an address into lat/lng plus structured address components. | Geocoding API |
+| `reverse_geocode` | Turns a lat/lng into a readable address. | Geocoding API |
+| `get_directions` | Turn-by-turn directions for driving, walking, bicycling, or transit, with optional alternative routes. | Directions API |
+| `get_distance_matrix` | Travel time and distance for every origin/destination pair. | Distance Matrix API |
 
-Any tool that needs a location accepts an optional `location="lat,lng"` (or
-`origin=`) override. If omitted, the server auto-detects your location.
+Any location argument (`location`, `origin`) is optional and takes `"lat,lng"`. If you leave it out, the server detects your current location.
 
-## Setup
+## Example
 
-### 1. Get a Google Maps Platform API key
+*This is an illustrative example of how Claude uses the tools. It is not a recorded transcript.*
 
-In the [Google Cloud Console](https://console.cloud.google.com/google/maps-apis):
+> **You:** Find a well-rated cafe I can walk to that's open now, and tell me how long the walk is.
+>
+> **Claude:** *(calls `get_my_location`, then `search_nearby` with `query_types=["cafe"]`, `open_now=true`, `min_rating=4.3`, `rank_by="distance"`, then `get_directions` with `mode="walking"` to the top result)*
+> The closest match is *[cafe name]*, rated 4.6. It's about a 7-minute walk: head north on ... Do you want its hours or recent reviews?
 
-1. Create a project (or pick one) and enable billing.
-2. Enable these APIs:
-   - **Places API (New)** — for `search_nearby`, `search_text`, `get_place_details`
-   - **Geocoding API** — for `geocode`, `reverse_geocode`
-   - **Directions API** — for `get_directions`
-   - **Distance Matrix API** — for `get_distance_matrix`
-   - **Geolocation API** — for IP-based current location fallback
-3. Create an API key under *APIs & Services → Credentials*. Restrict it to those
-   APIs.
+## Requirements
 
-### 2. (Optional, macOS) Install CoreLocationCLI for real GPS-ish location
+- Python 3.10+
+- A Google Maps Platform API key. Billing must be enabled on the Cloud project, and Google charges per request beyond any free usage. In the [Cloud Console](https://console.cloud.google.com/google/maps-apis), enable these APIs:
+  - **Places API (New)**: `search_nearby`, `search_text`, `get_place_details`
+  - **Geocoding API**: `geocode`, `reverse_geocode`
+  - **Directions API**: `get_directions`
+  - **Distance Matrix API**: `get_distance_matrix`
+  - **Geolocation API**: IP-based fallback for `get_my_location`
 
-```sh
-brew install corelocationcli
-```
+  Restrict the key to these APIs.
+- Optional (macOS): `brew install corelocationcli` gives a more precise location. macOS asks for Location Services permission the first time it runs.
 
-The first run will prompt you to grant Location Services permission to the
-terminal. Without this, the server falls back to IP-based geolocation.
-
-### 3. Install the server
+## Install
 
 ```sh
-cd google_maps_mcp
+git clone https://github.com/sourabhmadur/google-maps-mcp.git
+cd google-maps-mcp
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e .
-cp .env.example .env
-# edit .env and paste your API key
+cp .env.example .env   # then set GOOGLE_MAPS_API_KEY
 ```
 
-### 4. Register with Claude Code
+Environment variables (in `.env`, or passed in through the client config):
 
-Add it to Claude Code's MCP config (`~/.claude.json` or via the CLI):
+| Variable | Required | Purpose |
+| --- | --- | --- |
+| `GOOGLE_MAPS_API_KEY` | yes | Google Maps Platform key |
+| `GOOGLE_MAPS_DEFAULT_LOCATION` | no | Fallback `"lat,lng"` used when location can't be detected |
+| `GOOGLE_MAPS_DISABLE_CORELOCATION` | no | Set to `1` to skip CoreLocation |
+
+## Connect to Claude
+
+**Claude Code**
 
 ```sh
-claude mcp add google-maps \
-  --command "/absolute/path/to/google_maps_mcp/.venv/bin/google-maps-mcp" \
-  --env GOOGLE_MAPS_API_KEY=your_key_here
+claude mcp add google-maps -e GOOGLE_MAPS_API_KEY=your_key_here \
+  -- /absolute/path/to/google-maps-mcp/.venv/bin/google-maps-mcp
 ```
 
-Or, run from anywhere with `uv`:
+**Claude Desktop**: add this to `claude_desktop_config.json`:
 
-```sh
-claude mcp add google-maps \
-  --command "uv" \
-  --args "run" "--directory" "/absolute/path/to/google_maps_mcp" "google-maps-mcp" \
-  --env GOOGLE_MAPS_API_KEY=your_key_here
+```json
+{
+  "mcpServers": {
+    "google-maps": {
+      "command": "/absolute/path/to/google-maps-mcp/.venv/bin/google-maps-mcp",
+      "env": { "GOOGLE_MAPS_API_KEY": "your_key_here" }
+    }
+  }
+}
 ```
 
-### 5. (Optional) Set a default fallback location
+## Sanity check
 
-If neither CoreLocation nor the Geolocation API can determine your location,
-the server reads `GOOGLE_MAPS_DEFAULT_LOCATION`:
-
-```sh
-# in .env
-GOOGLE_MAPS_DEFAULT_LOCATION=37.7749,-122.4194
-```
-
-## Quick sanity check
+This lists the registered tools. It makes no API calls.
 
 ```sh
-source .venv/bin/activate
-python -c "from google_maps_mcp.server import mcp; print([t.name for t in mcp._tool_manager.list_tools()])"
+python -c "import asyncio; from google_maps_mcp.server import mcp; print([t.name for t in asyncio.run(mcp.list_tools())])"
 ```
 
 You should see all eight tool names.
 
-## Example prompts
+## Works well with
 
-- *"Find me a highly-rated cafe within walking distance."*
-- *"What's open right now near me for late-night food?"*
-- *"How long to drive to SFO with current traffic?"*
-- *"Give me the hours and phone number for [place name]."*
-- *"What's the address for 37.7749,-122.4194?"*
+[ticketmaster-mcp](https://github.com/sourabhmadur/ticketmaster-mcp): pass the coordinates from `get_my_location` to its `search_events` to find events near you.
